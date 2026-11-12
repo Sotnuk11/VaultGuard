@@ -97,3 +97,25 @@ def test_users_listing_has_no_password_fields(client, setup):
 def test_weak_user_password_rejected(client, setup):
     admin, *_ = setup
     assert client.post("/api/users", json={"username": "carol", "password": "short"}, headers=admin).status_code == 422
+
+
+def test_unknown_user_id_in_folder_access_gives_400_not_500(client, setup):
+    admin, _, _, folder = setup
+    assert client.put(f"/api/folders/{folder}/access", json={"allowed_user_ids": [9999]}, headers=admin).status_code == 400
+    assert client.post("/api/folders", json={"name": "x", "allowed_user_ids": [9999]}, headers=admin).status_code == 400
+
+
+def test_admin_cannot_save_into_missing_folder(client, setup):
+    admin, *_ = setup
+    r = client.post("/api/encrypt", json={"server_name": "s", "password": "p", "master_password": "master-pass-1", "folder_id": 9999}, headers=admin)
+    assert r.status_code == 404
+
+
+def test_missing_item_and_forbidden_item_look_identical(client, setup):
+    _, alice, bob, folder = setup
+    client.post("/api/encrypt", json={"server_name": "db", "password": "s3cret", "master_password": "master-pass-1", "folder_id": folder}, headers=alice)
+    item_id = client.get(f"/api/folders/{folder}/items", headers=alice).json()[0]["id"]
+    forbidden = client.post("/api/decrypt", json={"item_id": item_id, "master_password": "master-pass-1"}, headers=bob)
+    missing = client.post("/api/decrypt", json={"item_id": 99999, "master_password": "master-pass-1"}, headers=bob)
+    assert forbidden.status_code == missing.status_code == 404
+    assert forbidden.json() == missing.json()

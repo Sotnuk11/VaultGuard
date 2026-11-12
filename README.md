@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Sotnuk11/VaultGuard/actions/workflows/ci.yml/badge.svg)](https://github.com/Sotnuk11/VaultGuard/actions/workflows/ci.yml)
 
-A small team password vault with folder-level access control, client-side-style encryption and a dead man's switch.
+A small team password vault with folder-level access control, server-side AES encryption and a dead man's switch.
 Built as a security-focused full-stack project: **FastAPI + PostgreSQL** backend, **React (Vite)** frontend.
 
 ## Features
@@ -11,7 +11,7 @@ Built as a security-focused full-stack project: **FastAPI + PostgreSQL** backend
 - **Folders with access control**: admins create folders and choose which users may open them. Every item and decrypt request is checked against folder access.
 - **Encrypted secrets**: each secret is encrypted with AES-256-GCM. The key is derived from a master password with PBKDF2-HMAC-SHA256 (600 000 iterations) and a random salt. The master password is never stored, so a database leak exposes only ciphertext.
 - **Dead man's switch** (`checker.py`): if the admin sends no heartbeat for a configurable time, the vault ciphertext is emailed to a trusted person, encrypted with their RSA public key (hybrid RSA-OAEP + AES-GCM).
-- **Tests**: 16 automated tests covering crypto, authentication and authorization rules.
+- **Tests**: 19 automated tests covering crypto, authentication and authorization rules.
 
 ## Security design
 
@@ -19,7 +19,7 @@ Built as a security-focused full-stack project: **FastAPI + PostgreSQL** backend
 |---|---|
 | Database leak | Secrets stored as AES-GCM ciphertext; passwords as bcrypt hashes |
 | Forged role / privilege escalation | Role loaded from DB on each request; admin endpoints use an `admin_required` dependency (covered by tests) |
-| Access to other users' folders | Folder membership checked on list, create, decrypt; "missing" and "forbidden" return the same 404 |
+| Access to other users' folders | Folder membership checked on list, create, decrypt; "missing" and "forbidden" return the same 404 (`Not found`) |
 | Tampered ciphertext | GCM authentication tag; decryption fails on any change |
 | User enumeration via login | Identical error and constant bcrypt work for unknown users |
 | Secrets in the repo | Configuration only through environment variables; `.env`, `*.pem`, `keys/` are git-ignored |

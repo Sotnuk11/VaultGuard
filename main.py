@@ -84,6 +84,8 @@ def bootstrap_admin() -> None:
 
 
 bootstrap_admin()
+# Computed once at startup so a login for an unknown user costs the same single bcrypt check as a real one.
+DUMMY_HASH = security.hash_password("not-a-real-password")
 
 # ---------- app ----------
 app = FastAPI(title="VaultGuard API")
@@ -131,8 +133,15 @@ def can_access_folder(db: Session, user: User, folder_id: int) -> bool:
 
 def require_folder(db: Session, user: User, folder_id: int) -> None:
     # Same error for "missing" and "forbidden" so folder ids cannot be probed.
-    if not can_access_folder(db, user, folder_id):
-        raise HTTPException(status_code=404, detail="Folder not found")
+    if db.get(Folder, folder_id) is None or not can_access_folder(db, user, folder_id):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def require_existing_users(db: Session, user_ids: list[int]) -> None:
+    wanted = set(user_ids)
+    found = {row[0] for row in db.query(User.id).filter(User.id.in_(wanted)).all()} if wanted else set()
+    if wanted - found:
+        raise HTTPException(status_code=400, detail="Unknown user id")
 
 
 # ---------- schemas ----------
@@ -172,7 +181,7 @@ class DecryptReq(BaseModel):
 def login(data: LoginReq, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == data.username).first()
     # Always run bcrypt, even for unknown users, so response time does not reveal valid usernames.
-    hashed = user.password_hash if user else security.hash_password("dummy-password")
+    hashed = user.password_hash if user else DUMMY_HASH
     ok = security.verify_password(data.password, hashed)
     if not user or not ok:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -221,6 +230,7 @@ def list_folders(user: User = Depends(current_user), db: Session = Depends(get_d
 def create_folder(data: FolderCreate, _: User = Depends(admin_required), db: Session = Depends(get_db)):
     if db.query(Folder).filter(Folder.name == data.name).first():
         raise HTTPException(status_code=409, detail="Folder already exists")
+    require_existing_users(db, data.allowed_user_ids)
     folder = Folder(name=data.name)
     db.add(folder)
     db.flush()
@@ -234,6 +244,7 @@ def create_folder(data: FolderCreate, _: User = Depends(admin_required), db: Ses
 def update_access(folder_id: int, data: AccessUpdate, _: User = Depends(admin_required), db: Session = Depends(get_db)):
     if not db.get(Folder, folder_id):
         raise HTTPException(status_code=404, detail="Folder not found")
+    require_existing_users(db, data.allowed_user_ids)
     db.query(FolderAccess).filter(FolderAccess.folder_id == folder_id).delete()
     for uid in set(data.allowed_user_ids):
         db.add(FolderAccess(user_id=uid, folder_id=folder_id))
@@ -271,7 +282,7 @@ def save_item(data: ItemCreate, user: User = Depends(current_user), db: Session 
 def decrypt_item(data: DecryptReq, user: User = Depends(current_user), db: Session = Depends(get_db)):
     item = db.get(VaultItem, data.item_id)
     if item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise HTTPException(status_code=404, detail="Not found")
     require_folder(db, user, item.folder_id)
     try:
         return {"password": security.decrypt_secret(item.encrypted_data, data.master_password)}
